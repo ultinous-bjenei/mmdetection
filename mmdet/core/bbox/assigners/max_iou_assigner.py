@@ -108,9 +108,12 @@ class MaxIoUAssigner(BaseAssigner):
                 ignore_overlaps = bbox_overlaps(
                     gt_bboxes_ignore, bboxes, mode='iof')
                 ignore_max_overlaps, _ = ignore_overlaps.max(dim=0)
-            overlaps[:, ignore_max_overlaps > self.ignore_iof_thr] = -1
+            ignore_mask = ignore_max_overlaps > self.ignore_iof_thr
+        else:
+            ignore_mask = bboxes.new_zeros((overlaps.size(1), ), dtype=torch.bool)
 
-        assign_result = self.assign_wrt_overlaps(overlaps, gt_labels)
+        assign_result = self.assign_wrt_overlaps(
+            overlaps, ignore_mask, gt_labels)
         if assign_on_cpu:
             assign_result.gt_inds = assign_result.gt_inds.to(device)
             assign_result.max_overlaps = assign_result.max_overlaps.to(device)
@@ -118,12 +121,13 @@ class MaxIoUAssigner(BaseAssigner):
                 assign_result.labels = assign_result.labels.to(device)
         return assign_result
 
-    def assign_wrt_overlaps(self, overlaps, gt_labels=None):
+    def assign_wrt_overlaps(self, overlaps, ignore_mask, gt_labels=None):
         """Assign w.r.t. the overlaps of bboxes with gts.
 
         Args:
             overlaps (Tensor): Overlaps between k gt_bboxes and n bboxes,
                 shape(k, n).
+            ignore_mask (Tensor): Mask of n bboxes, shape (n, ).
             gt_labels (Tensor, optional): Labels of k gt_bboxes, shape (k, ).
 
         Returns:
@@ -141,7 +145,7 @@ class MaxIoUAssigner(BaseAssigner):
             max_overlaps = overlaps.new_zeros((num_bboxes, ))
             if num_gts == 0:
                 # No truth, assign everything to background
-                assigned_gt_inds[:] = 0
+                assigned_gt_inds[~ignore_mask] = 0
             if gt_labels is None:
                 assigned_labels = None
             else:
@@ -162,11 +166,12 @@ class MaxIoUAssigner(BaseAssigner):
 
         # 2. assign negative: below
         if isinstance(self.neg_iou_thr, float):
-            assigned_gt_inds[(max_overlaps >= 0)
+            assigned_gt_inds[~ignore_mask
                              & (max_overlaps < self.neg_iou_thr)] = 0
         elif isinstance(self.neg_iou_thr, tuple):
             assert len(self.neg_iou_thr) == 2
-            assigned_gt_inds[(max_overlaps >= self.neg_iou_thr[0])
+            assigned_gt_inds[~ignore_mask
+                             & (max_overlaps >= self.neg_iou_thr[0])
                              & (max_overlaps < self.neg_iou_thr[1])] = 0
 
         # 3. assign positive: above positive IoU threshold
@@ -175,7 +180,7 @@ class MaxIoUAssigner(BaseAssigner):
 
         # 4. assign fg: for each gt, proposals with highest IoU
         for i in range(num_gts):
-            if gt_max_overlaps[i] >= self.min_pos_iou:
+            if gt_max_overlaps[i] and gt_max_overlaps[i] >= self.min_pos_iou:
                 if self.gt_max_assign_all:
                     max_iou_inds = overlaps[i, :] == gt_max_overlaps[i]
                     assigned_gt_inds[max_iou_inds] = i + 1

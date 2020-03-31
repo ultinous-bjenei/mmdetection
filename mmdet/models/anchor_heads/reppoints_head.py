@@ -60,8 +60,10 @@ class RepPointsHead(nn.Module):
                  use_grid_points=False,
                  center_init=True,
                  transform_method='moment',
-                 moment_mul=0.01):
+                 moment_mul=0.01,
+                 debug_ignore=False):
         super(RepPointsHead, self).__init__()
+        self.debug_ignore = debug_ignore
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.feat_channels = feat_channels
@@ -440,7 +442,8 @@ class RepPointsHead(nn.Module):
             gt_bboxes_ignore_list=gt_bboxes_ignore,
             gt_labels_list=gt_labels,
             label_channels=label_channels,
-            sampling=self.sampling)
+            sampling=self.sampling,
+            debug_ignore=self.debug_ignore)
         (*_, bbox_gt_list_init, candidate_list_init, bbox_weights_list_init,
          num_total_pos_init, num_total_neg_init) = cls_reg_targets_init
         num_total_samples_init = (
@@ -473,7 +476,8 @@ class RepPointsHead(nn.Module):
             gt_bboxes_ignore_list=gt_bboxes_ignore,
             gt_labels_list=gt_labels,
             label_channels=label_channels,
-            sampling=self.sampling)
+            sampling=self.sampling,
+            debug_ignore=self.debug_ignore)
         (labels_list, label_weights_list, bbox_gt_list_refine,
          candidate_list_refine, bbox_weights_list_refine, num_total_pos_refine,
          num_total_neg_refine) = cls_reg_targets_refine

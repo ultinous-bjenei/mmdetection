@@ -116,3 +116,11 @@ work_dirs/
 
 # Pytorch
 *.pth
+
+# bjenei
+*.csv
+*.json
+virtualenv/
+debug/
+user/
+.tags*

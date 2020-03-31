@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 
 import mmcv
 import torch
@@ -98,6 +99,8 @@ def main():
     if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
         raise ValueError('The output file must be a pkl file.')
 
+    assert not args.format_only or args.out
+
     cfg = mmcv.Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
@@ -148,12 +151,16 @@ def main():
 
     rank, _ = get_dist_info()
     if rank == 0:
-        if args.out:
-            print('\nwriting results to {}'.format(args.out))
-            mmcv.dump(outputs, args.out)
         kwargs = {} if args.options is None else args.options
-        if args.format_only:
-            dataset.format_results(outputs, **kwargs)
+        if args.out:
+            dir = "results"
+            os.makedirs(dir, exist_ok=True)
+            out = os.path.join(dir, args.out)
+            print('\nwriting results to {}'.format(out))
+            mmcv.dump(outputs, out)
+            if args.format_only:
+                t = dataset.format_results(outputs, **kwargs)
+                shutil.copy2(t[0]["bbox"], os.path.splitext(out)[0]+".json")
         if args.eval:
             dataset.evaluate(outputs, args.eval, **kwargs)
 

@@ -750,6 +750,34 @@ class Corrupt(object):
 
 
 @PIPELINES.register_module
+class RgbToGrayscale(object):
+
+    def __init__(self, augment=False, single_channel=False):
+        self.augment = augment
+        self.single_channel = single_channel
+
+    def __call__(self, results):
+        results['img'] = np.dot(
+            results['img'], (0.114, 0.587, 0.299))[...,np.newaxis]
+
+        if not self.single_channel:
+            results['img'] = np.repeat(results['img'], 3, axis=-1)
+
+        if self.augment:
+            s = np.random.uniform(0.1, 1.0)
+            o = np.random.uniform(0.0, (1.0-s)*255.0)
+            results['img'] = s*results['img']+o
+
+        return results
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += '(augment={}, single_channel={})'.format(
+            self.augment, self.single_channel)
+        return repr_str
+
+
+@PIPELINES.register_module
 class Albu(object):
 
     def __init__(self,

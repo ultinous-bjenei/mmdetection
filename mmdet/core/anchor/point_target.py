@@ -1,8 +1,11 @@
 import torch
+import time
+import os
+from PIL import Image
+from PIL import ImageDraw
 
 from ..bbox import PseudoSampler, assign_and_sample, build_assigner
 from ..utils import multi_apply
-
 
 def point_target(proposals_list,
                  valid_flag_list,
@@ -13,7 +16,8 @@ def point_target(proposals_list,
                  gt_labels_list=None,
                  label_channels=1,
                  sampling=True,
-                 unmap_outputs=True):
+                 unmap_outputs=True,
+                 debug_ignore=False):
     """Compute corresponding GT box and classification targets for proposals.
 
     Args:
@@ -54,7 +58,8 @@ def point_target(proposals_list,
          cfg=cfg,
          label_channels=label_channels,
          sampling=sampling,
-         unmap_outputs=unmap_outputs)
+         unmap_outputs=unmap_outputs,
+         debug_ignore=debug_ignore)
     # no valid points
     if any([labels is None for labels in all_labels]):
         return None
@@ -95,12 +100,13 @@ def point_target_single(flat_proposals,
                         cfg,
                         label_channels=1,
                         sampling=True,
-                        unmap_outputs=True):
+                        unmap_outputs=True,
+                        debug_ignore=False):
     inside_flags = valid_flags
     if not inside_flags.any():
         return (None, ) * 7
     # assign gt and sample proposals
-    proposals = flat_proposals[inside_flags, :]
+    proposals = flat_proposals[inside_flags.type(torch.bool), :]
 
     if sampling:
         assign_result, sampling_result = assign_and_sample(
@@ -112,6 +118,87 @@ def point_target_single(flat_proposals,
         bbox_sampler = PseudoSampler()
         sampling_result = bbox_sampler.sample(assign_result, proposals,
                                               gt_bboxes)
+
+    if debug_ignore and sampling_result.pos_bboxes.shape[0]:
+    # assign_result: gt_inds, labels
+    # sampling_result: neg_inds, neg_bboxes, pos_inds, pos_bboxes,
+    #                  pos_assigned_gt_inds, num_gts
+        assignerType = cfg.assigner["type"]
+        pointAssigner = assignerType == "PointAssigner"
+        print(
+            assignerType,"-",
+            "gt:", sampling_result.num_gts,
+            "p:", sampling_result.pos_inds.shape[0],
+            "n:", sampling_result.neg_inds.shape[0],
+            "ign:", (assign_result.gt_inds == -1).sum().item()
+        )
+        print()
+
+        xMin = min(map(min,(gt_bboxes[...,0],
+            sampling_result.pos_bboxes[...,0])))
+        yMin = min(map(min, (gt_bboxes[...,1],
+            sampling_result.pos_bboxes[...,1])))
+        if gt_bboxes_ignore.shape[0]:
+            xMin = min(xMin, min(gt_bboxes_ignore[...,0]))
+            yMin = min(yMin, min(gt_bboxes_ignore[...,1]))
+
+        sampling_result.pos_bboxes[...,0] -= min(0,xMin)
+        sampling_result.pos_bboxes[...,1] -= min(0,yMin)
+        if not pointAssigner:
+            sampling_result.pos_bboxes[...,2] -= min(0,xMin)
+            sampling_result.pos_bboxes[...,3] -= min(0,yMin)
+        aa = [gt_bboxes]
+        if gt_bboxes_ignore.shape[0]:
+            aa.append(gt_bboxes_ignore)
+        for a in aa:
+            a[...,0] -= min(0,xMin)
+            a[...,2] -= min(0,xMin)
+            a[...,1] -= min(0,yMin)
+            a[...,3] -= min(0,yMin)
+
+        if not pointAssigner:
+            xA = sampling_result.pos_bboxes[...,2]
+            yA = sampling_result.pos_bboxes[...,3]
+        else:
+            xA = sampling_result.pos_bboxes[...,0]
+            yA = sampling_result.pos_bboxes[...,1]
+        xMax = max(map(max,(gt_bboxes[...,2],xA)))
+        yMax = max(map(max,(gt_bboxes[...,3],yA)))
+        if gt_bboxes_ignore.shape[0]:
+            xMax = max(xMax, max(gt_bboxes_ignore[...,2]))
+            yMax = max(yMax, max(gt_bboxes_ignore[...,3]))
+
+        im = Image.new("RGB", (xMax+1,yMax+1), "white")
+        draw = ImageDraw.Draw(im)
+
+        for i in range(sampling_result.pos_bboxes.shape[0]):
+            x1 = int(sampling_result.pos_bboxes[i][0])
+            y1 = int(sampling_result.pos_bboxes[i][1])
+            if not pointAssigner:
+                x2 = int(sampling_result.pos_bboxes[i][2])
+                y2 = int(sampling_result.pos_bboxes[i][3])
+                draw.rectangle((x1,y1,x2,y2), outline="green")
+            else:
+                draw.ellipse((x1-5,y1-5,x1+5,y1+5), fill="green")
+
+        if gt_bboxes_ignore.shape[0]:
+            for i in range(gt_bboxes_ignore.shape[0]):
+                x1 = int(gt_bboxes_ignore[i][0])
+                y1 = int(gt_bboxes_ignore[i][1])
+                x2 = int(gt_bboxes_ignore[i][2])
+                y2 = int(gt_bboxes_ignore[i][3])
+                draw.rectangle((x1,y1,x2,y2), outline="red")
+
+        for i in range(gt_bboxes.shape[0]):
+            x1 = int(gt_bboxes[i][0])
+            y1 = int(gt_bboxes[i][1])
+            x2 = int(gt_bboxes[i][2])
+            y2 = int(gt_bboxes[i][3])
+            draw.rectangle((x1,y1,x2,y2), outline="blue")
+
+        dir = "debug"
+        os.makedirs(dir, exist_ok=True)
+        im.save(os.path.join(dir, str(int(round(time.time()*1000)))+".png"))
 
     num_valid_proposals = proposals.shape[0]
     bbox_gt = proposals.new_zeros([num_valid_proposals, 4])
@@ -157,9 +244,9 @@ def unmap(data, count, inds, fill=0):
     size count) """
     if data.dim() == 1:
         ret = data.new_full((count, ), fill)
-        ret[inds] = data
+        ret[inds.type(torch.bool)] = data
     else:
         new_size = (count, ) + data.size()[1:]
         ret = data.new_full(new_size, fill)
-        ret[inds, :] = data
+        ret[inds.type(torch.bool), :] = data
     return ret

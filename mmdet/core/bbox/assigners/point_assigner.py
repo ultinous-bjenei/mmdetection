@@ -3,7 +3,6 @@ import torch
 from .assign_result import AssignResult
 from .base_assigner import BaseAssigner
 
-
 class PointAssigner(BaseAssigner):
     """Assign a corresponding gt bbox or background to each point.
 
@@ -15,9 +14,10 @@ class PointAssigner(BaseAssigner):
 
     """
 
-    def __init__(self, scale=4, pos_num=3):
+    def __init__(self, scale=4, pos_num=3, ignore=False):
         self.scale = scale
         self.pos_num = pos_num
+        self.ignore = ignore
 
     def assign(self, points, gt_bboxes, gt_bboxes_ignore=None, gt_labels=None):
         """Assign gt to points.
@@ -116,6 +116,45 @@ class PointAssigner(BaseAssigner):
             assigned_gt_inds[min_dist_points_index] = idx + 1
             assigned_gt_dist[min_dist_points_index] = min_dist[
                 less_than_recorded_index]
+
+        if (self.ignore and gt_bboxes_ignore is not None
+                and len(gt_bboxes_ignore)):
+
+            # for pointIndex in range(num_points):
+            #     point = points_xy[pointIndex]
+            #     for ignoredBoxIndex in range(gt_bboxes_ignore.shape[0]):
+            #         ignoredBox = gt_bboxes_ignore[ignoredBoxIndex]
+            #         if (ignoredBox[0] <= point[0] <= ignoredBox[2]
+            #                 and ignoredBox[1] <= point[1] <= ignoredBox[3]):
+            #             assigned_gt_inds[pointIndex] = -1
+            #             break
+            #
+            # for pointIndex in range(num_points):
+            #     if (gt_bboxes_ignore[...,0] <=
+            #             points_xy[pointIndex,0]
+            #             <= gt_bboxes_ignore[...,2]
+            #             and gt_bboxes_ignore[...,1] <=
+            #             points_xy[pointIndex,1]
+            #             <= gt_bboxes_ignore[...,3]).any():
+            #
+            #         assigned_gt_inds[pointIndex] = -1
+            #
+            # for boxIndex in range(gt_bboxes_ignore.shape[0]):
+            #     indices1 = (gt_bboxes_ignore[boxIndex,0] <= points_xy[...,0])
+            #     indices2 = (gt_bboxes_ignore[boxIndex,1] <= points_xy[...,1])
+            #     indices3 = (points_xy[...,0] <= gt_bboxes_ignore[boxIndex,2])
+            #     indices4 = (points_xy[...,1] <= gt_bboxes_ignore[boxIndex,3])
+            #     indices5 = (assigned_gt_inds == 0)
+            #     assigned_gt_inds[
+            #         indices1 * indices2 * indices3 * indices4] = -1
+
+            for boxIndex in range(gt_bboxes_ignore.shape[0]):
+                assigned_gt_inds[
+                    (assigned_gt_inds == 0)
+                    & (gt_bboxes_ignore[boxIndex,0] <= points_xy[...,0])
+                    & (gt_bboxes_ignore[boxIndex,1] <= points_xy[...,1])
+                    & (points_xy[...,0] <= gt_bboxes_ignore[boxIndex,2])
+                    & (points_xy[...,1] <= gt_bboxes_ignore[boxIndex,3])] = -1
 
         if gt_labels is not None:
             assigned_labels = assigned_gt_inds.new_zeros((num_points, ))
