@@ -752,28 +752,57 @@ class Corrupt(object):
 @PIPELINES.register_module
 class RgbToGrayscale(object):
 
-    def __init__(self, augment=False, single_channel=False):
+    def __init__(self, augment=False, single_channel=False, solarize=False):
         self.augment = augment
         self.single_channel = single_channel
+        self.solarize = solarize
 
     def __call__(self, results):
-        results['img'] = np.dot(
-            results['img'], (0.114, 0.587, 0.299))[...,np.newaxis]
+        # rgb to grayscale conversion
+        # https://docs.opencv.org/2.4/modules/imgproc/doc/miscellaneous_transformations.html?highlight=cvtcolor
+        results['img'] = np.dot(results['img'].astype(np.float32),
+            np.array((0.114, 0.587, 0.299), dtype=np.float32))[...,np.newaxis]
+
+        if self.solarize:
+            choice = np.random.randint(4)
+            if choice in (1,2,3):
+                a,b = results['img'].min(),results['img'].max()
+                r = b - a
+                m = np.random.uniform(a + 0.25*r, b - 0.25*r)
+                mask = results['img'] <= m
+
+                # invert intensities in the [a,m] interval
+                if choice in (1,3):
+                    offset = m + a
+                    results['img'][mask] = (
+                        # m - (results['img'][mask] - a))
+                        -1*results['img'][mask] + offset)
+
+                # invert intensities in the (m;b] interval
+                if choice in (2,3):
+                    offset = b + m
+                    results['img'][~mask] = (
+                        # b - (results['img'][~mask] - m))
+                        -1*results['img'][~mask] + offset)
+
+        if self.augment:
+            s = np.random.uniform(0.1, 1.0)
+            o = np.random.uniform(0.0, 255.0*(1.0 - s))
+            results['img'] = s*results['img'] + o
 
         if not self.single_channel:
             results['img'] = np.repeat(results['img'], 3, axis=-1)
 
-        if self.augment:
-            s = np.random.uniform(0.1, 1.0)
-            o = np.random.uniform(0.0, (1.0-s)*255.0)
-            results['img'] = s*results['img']+o
+        # import time, cv2 as cv
+        # t = int(time.time()*1000)
+        # cv.imwrite("{}_{}.jpg".format(t, choice), results['img'])
 
         return results
 
     def __repr__(self):
         repr_str = self.__class__.__name__
-        repr_str += '(augment={}, single_channel={})'.format(
-            self.augment, self.single_channel)
+        repr_str += '(augment={}, single_channel={}, solarize={})'.format(
+            self.augment, self.single_channel, self.solarize)
         return repr_str
 
 
